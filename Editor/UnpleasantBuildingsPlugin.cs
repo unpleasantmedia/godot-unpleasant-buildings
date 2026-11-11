@@ -196,6 +196,17 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
     /// <summary>The plugin running now: the gizmos reach it here, since the scripts reloading makes them anew without it.</summary>
     public static UnpleasantBuildingsPlugin? Current { get; private set; }
 
+    /// <summary>
+    /// Made the one running again: statics are lost when the scripts reload, but the plugin stays in
+    /// the tree (its _EnterTree not run again), so it says so whenever the editor calls on it. Without
+    /// this, after a rebuild the gizmos drew no picked door, window or detail, nor their handles.
+    /// </summary>
+    private void Claim()
+    {
+        if (Current is null || !IsInstanceValid(Current))
+            Current = this;
+    }
+
     /// <summary>Every building in the edited scene given gizmos anew, from the gizmo plugin there is now (if any).</summary>
     private void RenewGizmos()
     {
@@ -310,6 +321,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
 
     public override bool _Handles(GodotObject @object)
     {
+        Claim();
         // Anything opened in the Inspector while a building is selected in the scene (its own door,
         // detail or balcony, or a resource in one of their settings): still that building's.
         // A building cluster, or anything in one but a building (Draw and Snap, to draw new buildings in it).
@@ -318,6 +330,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
 
     public override void _Edit(GodotObject? @object)
     {
+        Claim();
         // A resource opened in the Inspector (or nothing, for a moment) while the building is still
         // selected: carry on with it.
         if (@object is Resource || (@object is null && (StillOn(_building) || StillOnCluster(_cluster))))
@@ -358,6 +371,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
 
     public override void _MakeVisible(bool visible)
     {
+        Claim();
         // Hidden while its building is still selected (the Inspector on something else): kept on.
         if (!visible && (StillOn(_building) || StillOnCluster(_cluster)))
             return;
@@ -425,6 +439,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
 
     public override int _Forward3DGuiInput(Camera3D camera, InputEvent @event)
     {
+        Claim();
         Forwarded(@event);
         // Another tool at work in the view (props being put in it, say): its clicks, not these.
         if (BuildingsLinks.Busy?.Invoke() == true)
