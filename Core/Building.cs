@@ -138,6 +138,45 @@ public partial class Building : Node3D
 
     private void SaveAsScene() => SceneSaver?.Invoke(this);
 
+    /// <summary>Whether it has a foliage buffer of its own (see <see cref="FoliageBuffer"/>), not its cluster's.</summary>
+    [ExportGroup("Foliage")]
+    [Export]
+    public bool OwnFoliageBuffer
+    {
+        get => _ownFoliageBuffer;
+        set
+        {
+            _ownFoliageBuffer = value;
+            FoliageBufferChanged();
+        }
+    }
+
+    private bool _ownFoliageBuffer;
+
+    /// <summary>How far past its walls no foliage is painted, in metres (with Own Foliage Buffer on; else its cluster's).</summary>
+    [Export(PropertyHint.Range, "0,100,0.5,or_greater,suffix:m")]
+    public float FoliageBuffer
+    {
+        get => _foliageBuffer;
+        set
+        {
+            _foliageBuffer = Mathf.Max(0f, value);
+            FoliageBufferChanged();
+        }
+    }
+
+    private float _foliageBuffer = 4f;
+
+    /// <summary>How far past its walls no foliage is painted: its own, or its cluster's (4 m outside one).</summary>
+    public float FoliageBufferUsed => _ownFoliageBuffer ? _foliageBuffer : BuildingCluster.Of(GetParent())?.FoliageBuffer ?? 4f;
+
+    /// <summary>Its buffer changed: told on (see BuildingsLinks.Placed), as where it stands is.</summary>
+    public void FoliageBufferChanged()
+    {
+        if (IsInsideTree())
+            BuildingsLinks.Placed?.Invoke(this);
+    }
+
     [ExportGroup("Openings")]
     [Export]
     public Godot.Collections.Array<BuildingOpening> Openings

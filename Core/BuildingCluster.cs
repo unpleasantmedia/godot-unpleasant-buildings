@@ -29,6 +29,27 @@ public partial class BuildingCluster : Node3D
     [Export(PropertyHint.Range, "0,200,1,suffix:m")]
     public float CollisionMargin { get; set; } = 30f;
 
+    /// <summary>
+    /// How far past its buildings' walls no foliage is painted, in metres, for those without a buffer
+    /// of their own (see Building.OwnFoliageBuffer): told on as each is placed (BuildingsLinks.Placed).
+    /// </summary>
+    [ExportGroup("Foliage")]
+    [Export(PropertyHint.Range, "0,100,0.5,or_greater,suffix:m")]
+    public float FoliageBuffer
+    {
+        get => _foliageBuffer;
+        set
+        {
+            _foliageBuffer = Mathf.Max(0f, value);
+            if (!IsInsideTree())
+                return;
+            foreach (var building in Buildings)
+                building.FoliageBufferChanged();
+        }
+    }
+
+    private float _foliageBuffer = 4f;
+
     /// <summary>Bakes its buildings' look (see BakedBuildingsNode), for the game to draw them faster; the level to be saved after.</summary>
     [ExportToolButton("Bake Buildings", Icon = "Bake")]
     public Callable BakeButton => Callable.From(Bake);
