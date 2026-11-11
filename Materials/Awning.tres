@@ -1,0 +1,17 @@
+[gd_resource type="StandardMaterial3D" format=3 uid="uid://khfp307xoexb"]
+
+[sub_resource type="Gradient" id="Stripes"]
+interpolation_mode = 1
+offsets = PackedFloat32Array(0, 0.5)
+colors = PackedColorArray(0.72, 0.16, 0.14, 1, 0.93, 0.91, 0.86, 1)
+
+[sub_resource type="GradientTexture2D" id="StripesTexture"]
+gradient = SubResource("Stripes")
+height = 4
+
+[resource]
+resource_name = "Awning"
+albedo_texture = SubResource("StripesTexture")
+roughness = 0.95
+uv1_scale = Vector3(2.5, 1, 1)
+texture_filter = 0
