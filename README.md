@@ -2,16 +2,17 @@
 
 A building plugin for Godot 4.7 (.NET version). Draw a `Building` of any shape on the ground in the 3D view. It is walled up as many storeys as you set, with a level ground floor and a plinth down to the ground, however the ground slopes.
 
-Work in progress. So far: outlines, walls, storeys, the plinth, roofs, snapping, doors and windows, wall details, and balconies and awnings.
-
 ## Features
 
-- Outlines of any shape, drawn by clicking corners on the ground
-- Corners dragged as handles; a handle in the middle of each side adds a corner
-- Wall and plinth materials, storey count and storey height
-- Flat (with a parapet), hipped, gabled and shed roofs, with a pitch, an overhang and a material; hipped roofs for any outline, by its straight skeleton
-- The ground floor sits just above the highest ground under the building, and the plinth reaches below the lowest
-- Drawn straight through the rendering server, and solid in the game only: nothing is added to the scene tree
+- Outlines of any shape, drawn by clicking corners on the ground, with snapping to other buildings
+- Wall and plinth materials, storey count and storey height; the ground floor level whatever the ground does
+- Flat (with a parapet), hipped, gabled and shed roofs; hipped roofs for any outline, by its straight skeleton
+- Doors and windows, balconies, awnings and porches, and wall details (any scene: AC units, drainpipes, signs)
+- Interiors: inner walls, doorways and arches, rooms with their own materials, and straight, L and U stairs
+- Doors that swing open in the game
+- Clusters of buildings: drawn from the ground, saved as scenes, and baked into a few meshes, with collision built only near what needs it
+- Drawn straight through the rendering server: nothing is added to the scene tree but what you place
+- Every edit is one step to undo
 
 ## Requirements
 
@@ -27,29 +28,28 @@ The plugin must end up at exactly `addons/unpleasant_buildings`. As a submodule:
 git submodule add https://github.com/unpleasantmedia/godot-unpleasant-buildings.git addons/unpleasant_buildings
 ```
 
-Then, in Godot:
+Use the `main` branch, which has the plugin's files at its root. Then, in Godot:
 
 1. If the project has no `.csproj` file, choose **Project > Tools > C# > Create C# solution**.
 2. Click **Build** (the hammer at the top right).
 3. Enable **UnpleasantBuildings** under **Project > Project Settings > Plugins**.
 
-## Connect your ground
+## Connecting your project
 
-The plugin knows no terrain itself. Without help, outlines are drawn on whatever is solid (or on a flat plane at the building's height), and the ground is taken to be at the building's own height. Tell it about your ground when your code loads:
+The plugin knows no terrain, characters or door scripts of its own. Without a ground, outlines are drawn on whatever is solid (or on a flat plane at the building's height), and the ground is taken to be at the building's own height. Connect what your project has once, from a module initializer (all optional):
 
 ```csharp
-internal static class BuildingsHook
-{
-    [ModuleInitializer]
-    internal static void Hook()
-    {
-        // Where a ray from the camera meets the ground: the scene's root, the ray's start and direction.
-        BuildingsLinks.Ground = static (root, from, direction) => MyGround.Intersect(root, from, direction);
-        // The ground's height under a place in the world, or null.
-        BuildingsLinks.Height = static (root, at) => MyGround.HeightAt(root, at);
-    }
-}
+BuildingsLinks.Ground = (root, from, direction) => ...; // where a ray from the camera meets your ground
+BuildingsLinks.Height = (root, at) => ...;              // your ground's height under a place
+BuildingsLinks.Door = () => new MyDoor();               // your own door bodies, to hang in doorways (see Doors in the game)
+BuildingsLinks.Busy = () => ...;                        // another tool has the 3D view's clicks (a prop being placed, say)
+BuildingsLinks.Anchors = node => ...;                   // what needs baked buildings solid near it (see Baking)
+BuildingsLinks.BakedFolder = "res://Assets/Meshes/Buildings/Baked";
+BuildingsLinks.Placed = building => ...;                // a building built again (drawn, moved, changed): building.Footprint() is where it stands
+BuildingsLinks.Removed = building => ...;               // a building taken away
 ```
+
+**Placed** and **Removed** are for keeping other things off buildings: foliage, for example, given masks where each building's `Footprint()` lies.
 
 ## Use
 
@@ -74,6 +74,7 @@ Click a door or window to select it. Drag its edges to size it, or its middle to
 - Doors have a frame and a single door, double doors, or none (an open doorway), and can be glazed.
 - Walls are 25 cm thick round their openings. A building with **Enterable** on has an inside (inner walls, a floor and a ceiling); without, its doors and windows are closed off at the back of the wall, dark.
 - **Frame Material**, **Glass Material** and **Door Material** are under **Openings** in the Inspector; with none, the plugin's own are used.
+- Each window's glass carries a number of its own in the red of its vertex colour, and its building's number in the green (blue 0), the same baked or not. The plugin's glass ignores them; a glass shader can use them to light some windows at night, each by itself.
 
 ## Balconies, awnings and porches
 
@@ -147,7 +148,7 @@ A `BuildingCluster` holds a group of buildings (a street, a block, a town). With
 
 ## Baking
 
-A cluster's buildings drawn as they're built are a mesh or more each: fine to edit, slow in a big level. **Bake Buildings**, in a `BuildingCluster`'s Inspector, merges their look (walls, roofs, windows, doors' frames, balconies, insides, stairs, wall details) into a mesh per square of ground and material, saved as files in `BuildingsLinks.BakedFolder` (or `res://BakedBuildings`), under a `BakedBuildingsNode` in the cluster. In the game, the buildings' own look is hidden and the baked one drawn instead; their collision, doors (to swing) and props are their own still. After the first bake, only squares whose buildings changed are baked again. If they change after baking, the game shows them unbaked (slower) and warns you to bake again. Save the level after baking.
+A cluster's buildings drawn as they're built are a mesh or more each: fine to edit, slow in a big level. **Bake Buildings**, in a `BuildingCluster`'s Inspector, merges their look (walls, roofs, windows, doors' frames, balconies, insides, stairs, wall details) into a mesh per square of ground and material, saved as files in `BuildingsLinks.BakedFolder` (or `res://BakedBuildings`), under a `BakedBuildingsNode` in the cluster. In the game, the buildings' own look is hidden and the baked one drawn instead; their collision, doors (to swing) and props are their own still. It runs in the background: the editor goes on while each square is merged and saved, with its progress in the Output every few seconds. After the first bake, only squares whose buildings changed are baked again. If they change after baking, the game shows them unbaked (slower) and warns you to bake again. Save the level after baking.
 
 Baked, a building isn't built in the game at all until something that needs it solid comes within the cluster's **Collision Range** (80 m): then its collision, doors (to swing) and wall details are built, nearest first, a few a frame (any within 15 m at once); it lets go of them again a **Collision Margin** (30 m) further off. Tell the plugin what needs buildings solid, for example the player's camera, people walking and cars (without it, the camera alone):
 
