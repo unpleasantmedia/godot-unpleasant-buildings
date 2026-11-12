@@ -197,7 +197,7 @@ public partial class UnpleasantBuildingsPlugin
         _ledgeDepth!.Value = p.Depth;
         _ledgeUp!.Value = p.Up;
         _ledgeStorey!.Value = p.Storey;
-        _ledgeStorey.MaxValue = Mathf.Max(0, _building.Storeys - 1);
+        _ledgeStorey.MaxValue = Mathf.Max(0, _building.AllStoreys - 1);
         _ledgeAllStoreys!.ButtonPressed = p.AllStoreys;
         _ledgeRailing!.Selected = (int)p.Railing;
         _ledgeRailingHeight!.Value = p.RailingHeight;
@@ -347,7 +347,7 @@ public partial class UnpleasantBuildingsPlugin
         var (from, direction) = LocalRay(building, camera, screen);
         if (building.WallAt(from, direction) is not { } hit)
             return null;
-        var storey = kind == ProjectionKind.Porch ? 0 : Mathf.Clamp(Mathf.FloorToInt((hit.V - building.FloorHeight) / building.StoreyHeight), 0, building.Storeys - 1);
+        var storey = kind == ProjectionKind.Porch ? 0 : building.StoreyOn(hit.Side, hit.V);
         var projection = BuildingProjection.Make(kind, hit.Side, storey, 0f);
         var length = building.SideLength(hit.Side);
         if (projection.Width > length)
@@ -445,7 +445,7 @@ public partial class UnpleasantBuildingsPlugin
     }
 
     private bool NearLedgeHandle(Building building, Camera3D camera, Vector2 screen) =>
-        SelectedProjection is { } p && p.Side < building.Outline.Length && LedgeHandles(building, p).Any(h =>
+        SelectedProjection is { } p && p.Side < building.SideCount && LedgeHandles(building, p).Any(h =>
         {
             var world = building.ToGlobal(h.At);
             return !camera.IsPositionBehind(world) && camera.UnprojectPosition(world).DistanceTo(screen) < ClickReach;

@@ -237,8 +237,10 @@ public partial class Building : Node3D
     /// <summary>A place on a side's outer face, in its own space: u along it from its start, v up.</summary>
     public Vector3 OnSide(int side, float u, float v)
     {
-        var a = _outline[side];
-        var d = (_outline[(side + 1) % _outline.Length] - a).Normalized();
+        if (WallSide(side) is not { } w)
+            return new Vector3(0f, v, 0f);
+        var a = w.Outline[w.Local];
+        var d = (w.Outline[(w.Local + 1) % w.Outline.Length] - a).Normalized();
         var p = a + d * u;
         return new Vector3(p.X, v, p.Y);
     }
@@ -246,20 +248,27 @@ public partial class Building : Node3D
     /// <summary>A side's outward direction, in its own space.</summary>
     public Vector3 SideOut(int side)
     {
-        var a = _outline[side];
-        var b = _outline[(side + 1) % _outline.Length];
+        if (WallSide(side) is not { } w)
+            return Vector3.Forward;
+        var a = w.Outline[w.Local];
+        var b = w.Outline[(w.Local + 1) % w.Outline.Length];
         var o = BuildingMesher.Out(a, b);
-        return BuildingMesher.SignedArea(_outline) < 0f ? -o : o;
+        return BuildingMesher.SignedArea(w.Outline) < 0f ? -o : o;
     }
 
-    /// <summary>Where a ray (in its own space) first meets the outside of one of its walls: the side, how far along it, and how high.</summary>
+    /// <summary>
+    /// Where a ray (in its own space) first meets the outside of one of its walls (any part's: see
+    /// <see cref="WallSide"/>): the side, how far along it, and how high.
+    /// </summary>
     public (int Side, float U, float V, float Distance)? WallAt(Vector3 from, Vector3 direction)
     {
         (int, float, float, float)? best = null;
         if (_outline.Length < 3)
             return null;
-        for (var i = 0; i < _outline.Length; i++)
+        for (var i = 0; i < SideCount; i++)
         {
+            if (WallSide(i) is not { Outline.Length: >= 3 } w)
+                continue;
             var normal = SideOut(i);
             var facing = direction.Dot(normal);
             if (facing >= -1e-4f)
@@ -267,11 +276,11 @@ public partial class Building : Node3D
             var plane = new Plane(normal, OnSide(i, 0f, 0f));
             if (plane.IntersectsRay(from, direction) is not { } hit)
                 continue;
-            var a = _outline[i];
-            var d = (_outline[(i + 1) % _outline.Length] - a).Normalized();
+            var a = w.Outline[w.Local];
+            var d = (w.Outline[(w.Local + 1) % w.Outline.Length] - a).Normalized();
             var u = (new Vector2(hit.X, hit.Z) - a).Dot(d);
             var distance = hit.DistanceTo(from);
-            if (u < 0f || u > SideLength(i) || hit.Y < FloorHeight || hit.Y > TopHeight + 20f)
+            if (u < 0f || u > SideLength(i) || hit.Y < StoreyFloor(w.Floor) || hit.Y > StoreyFloor(w.Top) + 20f)
                 continue;
             if (best is null || distance < best.Value.Item4)
                 best = (i, u, hit.Y, distance);
@@ -284,7 +293,7 @@ public partial class Building : Node3D
     public float StoreyFloor(int storey) => FloorHeight + storey * _storeyHeight;
 
     /// <summary>How long a side of its outline is.</summary>
-    public float SideLength(int side) => _outline.Length == 0 ? 0f : _outline[side].DistanceTo(_outline[(side + 1) % _outline.Length]);
+    public float SideLength(int side) => WallSide(side) is { Outline.Length: > 0 } w ? w.Outline[w.Local].DistanceTo(w.Outline[(w.Local + 1) % w.Outline.Length]) : 0f;
 
     /// <summary>
     /// Where its doors and windows go: each on its side, on its storey (a window on all storeys on
@@ -295,28 +304,56 @@ public partial class Building : Node3D
         var placed = new List<(BuildingOpening, int)>();
         foreach (var o in _openings.Where(o => o is not null))
         {
-            if (o.Side < 0 || o.Side >= _outline.Length || o.From < BuildingOpening.Margin - 0.001f || o.From + o.Width > SideLength(o.Side) - BuildingOpening.Margin + 0.001f)
+            // On a wall of any of its parts, within that part's storeys.
+            if (WallSide(o.Side) is not { Outline.Length: >= 3 } w || o.From < BuildingOpening.Margin - 0.001f || o.From + o.Width > SideLength(o.Side) - BuildingOpening.Margin + 0.001f)
                 continue;
-            var last = o.Kind == OpeningKind.Window && o.AllStoreys ? _storeys - 1 : o.Storey;
-            for (var storey = o.Storey; storey <= last && storey < _storeys; storey++)
-                if (o.Bottom + o.Height <= _storeyHeight * (_storeys - storey) + 0.001f)
+            var last = o.Kind == OpeningKind.Window && o.AllStoreys ? w.Top - 1 : o.Storey;
+            for (var storey = Mathf.Max(o.Storey, w.Floor); storey <= last && storey < w.Top; storey++)
+                if (o.Bottom + o.Height <= _storeyHeight * (w.Top - storey) + 0.001f)
                     placed.Add((o, storey));
         }
 
         return placed;
     }
 
-    private List<Hole> Holes()
+    /// <summary>Its main part's doors and windows, as holes in its walls (see <see cref="PartHoles"/>).</summary>
+    private List<Hole> Holes() => PartHoles(-1);
+
+    /// <summary>
+    /// A part's doors and windows (its main one's: -1), as holes in its walls: by the side of its
+    /// outline turned outward, along it and up. Not where another part lies against the wall (inside
+    /// the building's shape there, they'd open into it).
+    /// </summary>
+    private List<Hole> PartHoles(int part)
     {
-        var reversed = BuildingMesher.SignedArea(_outline) < 0f;
-        return Placed().Select(p =>
+        var holes = new List<Hole>();
+        List<PartBlock>? blocks = null;
+        foreach (var (o, storey) in Placed())
         {
-            var (o, storey) = p;
+            if (WallSide(o.Side) is not { } w || w.Part != part)
+                continue;
+            var outline = w.Outline;
             var length = SideLength(o.Side);
+            var reversed = BuildingMesher.SignedArea(outline) < 0f;
             var (u0, u1) = reversed ? (length - o.From - o.Width, length - o.From) : (o.From, o.From + o.Width);
             var v0 = StoreyFloor(storey) + o.Bottom;
-            return new Hole(BuildingMesher.OutwardSide(_outline, o.Side), u0, u1, v0, v0 + o.Height, o);
-        }).ToList();
+            var hole = new Hole(BuildingMesher.OutwardSide(outline, w.Local), u0, u1, v0, v0 + o.Height, o);
+            if (_parts.Count > 0)
+            {
+                blocks ??= PartBlocks(float.PositiveInfinity);
+                var ring = BuildingMesher.Outward(outline);
+                var (a, b) = (ring[hole.Side], ring[(hole.Side + 1) % ring.Length]);
+                var t = (u0 + u1) / 2f / Mathf.Max(length, 1e-4f);
+                var v = (hole.V0 + hole.V1) / 2f;
+                // Every other part's block (its own told by its outline: the same array).
+                if (BuildingMesher.CoveredBy(a, b, blocks.Where(x => !ReferenceEquals(x.Outline, outline))).Any(c => c.T0 <= t && t <= c.T1 && c.V0 <= v && v <= c.V1))
+                    continue;
+            }
+
+            holes.Add(hole);
+        }
+
+        return holes;
     }
 
     private RoofType _roof = RoofType.Gabled;
@@ -469,6 +506,13 @@ public partial class Building : Node3D
             undo.AddDoProperty(this, PropertyName.Outline, corners);
             undo.AddUndoProperty(this, Node3D.PropertyName.GlobalTransform, GlobalTransform);
             undo.AddUndoProperty(this, PropertyName.Outline, _outline);
+            // Its other parts are in its own space too: kept where they are.
+            foreach (var part in _parts.Where(p => p is not null))
+            {
+                undo.AddDoProperty(part, BuildingWing.PropertyName.Outline, part.Outline.Select(Moved).ToArray());
+                undo.AddUndoProperty(part, BuildingWing.PropertyName.Outline, part.Outline);
+            }
+
             // Interior walls, stairs and rooms are placed in its own space too: kept where they are.
             foreach (var w in walls)
             {
@@ -500,6 +544,8 @@ public partial class Building : Node3D
             s.Foot = Moved(s.Foot);
         foreach (var r in rooms)
             r.Seed = Moved(r.Seed);
+        foreach (var part in _parts.Where(p => p is not null))
+            part.Outline = part.Outline.Select(Moved).ToArray();
         GlobalTransform = moved;
         Outline = corners;
     }
@@ -563,6 +609,10 @@ public partial class Building : Node3D
     /// <summary>Where it stands: its outline's corners in the world, in X and Z.</summary>
     public Vector2[] Footprint() => [.. _outline.Select(c => ToGlobal(new Vector3(c.X, 0f, c.Y))).Select(p => new Vector2(p.X, p.Z))];
 
+    /// <summary>Where each of its parts stands (its main one first), in the world on the ground (X and Z), as <see cref="Footprint"/>.</summary>
+    public List<Vector2[]> Footprints() =>
+        [.. AllParts().Select(p => p.Outline.Select(c => ToGlobal(new Vector3(c.X, 0f, c.Y))).Select(w => new Vector2(w.X, w.Z)).ToArray())];
+
     public override void _Notification(int what)
     {
         switch ((long)what)
@@ -619,7 +669,16 @@ public partial class Building : Node3D
             return ["Draw its outline: select it, click Draw in the 3D view's toolbar, and click its corners on the ground."];
         if (!Simple(_outline))
             return ["Its outline crosses itself: move its corners so its sides don't cross."];
-        return [];
+        var warnings = new List<string>();
+        for (var i = 0; i < _parts.Count; i++)
+        {
+            if (_parts[i] is { Outline.Length: >= 3 } part && !Simple(part.Outline))
+                warnings.Add($"Part {i + 1}'s outline crosses itself: move its corners so its sides don't cross.");
+        }
+
+        foreach (var i in LooseParts())
+            warnings.Add($"Part {i + 1} (from floor {_parts[i].Floor}) isn't attached: it has to touch a part on its floor, or rest on one on the floor below.");
+        return [.. warnings];
     }
 
     /// <summary>Built again at the end of the frame (once, however many changes come before then).</summary>
@@ -705,7 +764,9 @@ public partial class Building : Node3D
         // Its number, for its windows' glass (see WindowSeed): from where it stands, so the same baked or not.
         var at = GlobalPosition;
         BuildingMesher.WindowSeed = (int)(BuildingMesher.StableHash(Mathf.RoundToInt(at.X), Mathf.RoundToInt(at.Z)) % 254u) + 1;
-        var roof = new RoofSettings(_roof, BuildingMesher.OutwardSide(_outline, UsedRoofSide), _roofPitch, _roofOverhang, _parapetHeight, _roofMaterial);
+        // Flat where another part stands on it (no parapet then: that part's walls rise from its edge).
+        var carried = MainCarried();
+        var roof = new RoofSettings(carried ? RoofType.Flat : _roof, BuildingMesher.OutwardSide(_outline, UsedRoofSide), _roofPitch, _roofOverhang, carried ? 0f : _parapetHeight, _roofMaterial);
         var openings = new OpeningMaterials(
             _frameMaterial ?? GD.Load<Material>($"{Materials}/Frame.tres"),
             _glassMaterial ?? GD.Load<Material>($"{Materials}/Glass.tres"),
@@ -715,9 +776,26 @@ public partial class Building : Node3D
         var top = open ? StoreyFloor(ShownStoreys) : TopHeight;
         var holes = open ? Holes().Where(h => h.V0 < top).ToList() : Holes();
         var rooms = _enterable && _rooms.Count > 0 ? Rooms_() : null;
-        var mesh = BuildingMesher.Shell(_outline, low - Buried, FloorHeight, top, _wallMaterial, _foundationMaterial ?? _wallMaterial, roof, holes, openings, _enterable, _interiorWallMaterial ?? _wallMaterial, open, rooms, hung);
+        // Its parts beside its main one, each where it is (cut open with the rest): the main one's walls
+        // left out where one lies against it, and theirs where another does (see BuildingMesher.Wings).
+        var blocks = PartBlocks(open ? top : float.PositiveInfinity);
+        System.Func<Vector2, Vector2, List<Covered>>? covered = blocks.Count > 1 ? (a, b) => BuildingMesher.CoveredBy(a, b, blocks.Skip(1)) : null;
+        var mesh = BuildingMesher.Shell(_outline, low - Buried, FloorHeight, top, _wallMaterial, _foundationMaterial ?? _wallMaterial, roof, holes, openings, _enterable, _interiorWallMaterial ?? _wallMaterial, open, rooms, hung, covered);
         BuildingMesher.Ledges(mesh, BuildingMesher.Outward(_outline), open ? Ledges().Where(l => l.V < top).ToList() : Ledges(), UsedProjectionMaterials());
         BuildInterior(mesh, rooms, hung, open);
+        if (blocks.Count > 1)
+        {
+            BuildingMesher.Wings(mesh, Wings(blocks, open ? top : float.PositiveInfinity), blocks, low - Buried, _wallMaterial, _foundationMaterial ?? _wallMaterial, openings);
+            // Their balconies and awnings, along their own outlines.
+            for (var i = 0; i < _parts.Count; i++)
+            {
+                if (_parts[i] is not { Outline.Length: >= 3 } part || !Simple(part.Outline))
+                    continue;
+                var ledges = PartLedges(i);
+                if (ledges.Count > 0)
+                    BuildingMesher.Ledges(mesh, BuildingMesher.Outward(part.Outline), open ? ledges.Where(l => l.V < top).ToList() : ledges, UsedProjectionMaterials());
+            }
+        }
         return mesh;
     }
 
@@ -728,10 +806,14 @@ public partial class Building : Node3D
         var root = SceneRoot();
         if (BuildingsLinks.Height is { } height && root is not null)
         {
-            for (var i = 0; i < _outline.Length; i++)
+            // Round its main part and every part on the ground floor (all of them stand on it).
+            var grounded = new List<Vector2[]> { _outline };
+            grounded.AddRange(_parts.Where(p => p is { Floor: 0, Outline.Length: >= 3 }).Select(p => p.Outline));
+            foreach (var ring in grounded)
+            for (var i = 0; i < ring.Length; i++)
             {
-                var a = _outline[i];
-                var b = _outline[(i + 1) % _outline.Length];
+                var a = ring[i];
+                var b = ring[(i + 1) % ring.Length];
                 var steps = Mathf.Max(1, Mathf.CeilToInt(a.DistanceTo(b) / GroundStep));
                 for (var s = 0; s < steps; s++)
                 {
@@ -743,7 +825,7 @@ public partial class Building : Node3D
             }
 
             // Its porches' decks too: round their edges, from the wall out to their fronts.
-            foreach (var porch in _projections.Where(p => p is not null && p.Kind == ProjectionKind.Porch && p.Side >= 0 && p.Side < _outline.Length))
+            foreach (var porch in _projections.Where(p => p is not null && p.Kind == ProjectionKind.Porch && p.Side >= 0 && p.Side < SideCount))
             {
                 var start = OnSide(porch.Side, porch.From, 0f);
                 var along = OnSide(porch.Side, porch.From + 1f, 0f) - start;

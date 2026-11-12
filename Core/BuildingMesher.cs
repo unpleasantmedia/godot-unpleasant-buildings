@@ -28,7 +28,7 @@ public static partial class BuildingMesher
     /// <param name="enterable">With an inside (inner walls, a floor and a ceiling); without, each door and window is closed off at the back of its wall.</param>
     /// <param name="innerFaces">What the walls' inner faces are made of, when enterable.</param>
     /// <param name="open">Cut open at the top (in the editor, to see in): no roof, the walls level.</param>
-    public static ArrayMesh Shell(Vector2[] outline, float bottom, float floor, float top, Material? walls, Material? plinth, RoofSettings roof, List<Hole> holes, OpeningMaterials openings, bool enterable, Material? innerFaces = null, bool open = false, RoomSet? rooms = null, List<DoorLeaf>? hung = null)
+    public static ArrayMesh Shell(Vector2[] outline, float bottom, float floor, float top, Material? walls, Material? plinth, RoofSettings roof, List<Hole> holes, OpeningMaterials openings, bool enterable, Material? innerFaces = null, bool open = false, RoomSet? rooms = null, List<DoorLeaf>? hung = null, System.Func<Vector2, Vector2, List<Covered>>? covered = null)
     {
         var mesh = new ArrayMesh();
         var ring = Outward(outline);
@@ -38,7 +38,7 @@ public static partial class BuildingMesher
 
         if (open)
         {
-            wall.Holed(ring, floor, _ => top, static (_, _) => [0f, 1f], holes);
+            wall.Holed(ring, floor, _ => top, static (_, _) => [0f, 1f], holes, covered: covered);
             // The walls' tops, seen from above.
             var rim = RoofShape.Reached(ring, -WallThickness);
             for (var i = 0; i < ring.Length; i++)
@@ -51,7 +51,7 @@ public static partial class BuildingMesher
         else if (roof.Type == RoofType.Flat)
         {
             var parapet = Mathf.Max(0f, roof.Parapet);
-            wall.Holed(ring, floor, _ => top + parapet, static (_, _) => [0f, 1f], holes);
+            wall.Holed(ring, floor, _ => top + parapet, static (_, _) => [0f, 1f], holes, covered: covered);
             if (parapet > 0.001f)
             {
                 // The parapet: in from the walls, its inner face, and a cap on it.
@@ -75,7 +75,7 @@ public static partial class BuildingMesher
         {
             var shape = new RoofShape(ring, roof.Type, roof.Side, roof.Pitch, roof.Overhang);
             // Walls up to the roof: flat under eaves, up to the ridge under gables, rising under a shed roof.
-            wall.Holed(ring, floor, p => top + Mathf.Max(0f, shape.HeightAt(p)), shape.Breaks, holes);
+            wall.Holed(ring, floor, p => top + Mathf.Max(0f, shape.HeightAt(p)), shape.Breaks, holes, covered: covered);
             Pitched(roofing, shape, top);
         }
 

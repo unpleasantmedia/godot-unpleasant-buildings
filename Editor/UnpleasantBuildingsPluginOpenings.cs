@@ -188,7 +188,7 @@ public partial class UnpleasantBuildingsPlugin
         _height!.Value = o.Height;
         _sill!.Value = o.Sill;
         _storey!.Value = o.Storey;
-        _storey.MaxValue = Mathf.Max(0, _building.Storeys - 1);
+        _storey.MaxValue = Mathf.Max(0, _building.AllStoreys - 1);
         _allStoreys!.ButtonPressed = o.AllStoreys;
         _panesAcross!.Value = o.Panes.X;
         _panesUp!.Value = o.Panes.Y;
@@ -402,7 +402,7 @@ public partial class UnpleasantBuildingsPlugin
         var (from, direction) = LocalRay(building, camera, screen);
         if (building.WallAt(from, direction) is not { } hit)
             return null;
-        var storey = Mathf.Clamp(Mathf.FloorToInt((hit.V - building.FloorHeight) / building.StoreyHeight), 0, building.Storeys - 1);
+        var storey = building.StoreyOn(hit.Side, hit.V);
         var opening = BuildingOpening.Make(kind, hit.Side, storey, 0f);
         var length = building.SideLength(hit.Side);
         var (low, high) = Room(length, opening.Width);

@@ -62,7 +62,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
             }
         }
 
-        return Snapped(local, shift);
+        return Snapped(building, local, shift);
     }
 
     /// <summary>Whether a side is being picked for the roof.</summary>
@@ -152,6 +152,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
         _afterSnap = new VSeparator();
         _toolbar.AddChild(_afterSnap);
         _toolbar.AddChild(_side);
+        AddPartTools(accent);
         AddOpeningTools(accent);
         AddDetailTools();
         AddProjectionTools();
@@ -213,13 +214,25 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
         // From the buildings in the tree: not by going through the level's nodes (which may not be
         // read from every thread the editor reloads plugins on).
         var buildings = Building.InTree.Where(IsInstanceValid).ToList();
+        // Not on the main thread (the plugin turned off, on the thread the editor does it on): the
+        // buildings' gizmos cleared there, a moment on (they may not be touched from this one).
+        var offThread = OS.GetThreadCallerId() != OS.GetMainThreadId();
         foreach (var building in buildings)
         {
+            if (offThread)
+            {
+                building.CallDeferred(Node3D.MethodName.ClearGizmos);
+                continue;
+            }
+
             building.ClearGizmos();
             if (_gizmos is not null)
                 // As the 3D editor does for a node coming into the scene.
                 GetTree().CallGroup("_spatial_editor_group", "_request_gizmo", building);
         }
+
+        if (offThread)
+            return;
 
         // The scripts reloaded with a building selected: the editor doesn't pass its clicks on to
         // this (new) plugin until it is edited again, so it is, as if picked anew.
@@ -352,6 +365,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
         if (building == _building)
             return;
         // A new building with no outline yet: straight into drawing it (the one before finished first).
+        StopDrawingPart();
         SetDrawing(false);
         StopPlacing();
         Select(null);
@@ -386,6 +400,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
         ShowDetailDock(visible);
         if (!visible)
         {
+            StopDrawingPart();
             SetDrawing(false);
             StopPlacing();
             Select(null);
@@ -406,6 +421,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
     {
         if (on)
         {
+            StopDrawingPart();
             StopPlacing();
             StopPlacingDetail();
             StopPlacingProjection();
@@ -458,6 +474,12 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
             if (_toolbar is not null)
                 _toolbar.Visible = true;
         }
+
+        // A part being drawn on the floor picked; a part's corner Ctrl-clicked away.
+        if (DrawingPart)
+            return DrawPart(camera, @event);
+        if (!Drawing && RemovePartCorner(camera, @event))
+            return (int)AfterGuiInput.Stop;
 
         if (!Drawing && HandleInput(camera, @event))
             return (int)AfterGuiInput.Stop;
@@ -640,48 +662,7 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
         undo.AddUndoProperty(building, Building.PropertyName.Outline, was ?? building.Outline);
         if (sides is not null)
         {
-            // Copies moved to their sides now, the old ones kept as they were for undoing.
-            var openings = new Godot.Collections.Array<BuildingOpening>();
-            foreach (var o in building.Openings.Where(o => o is not null))
-            {
-                if (sides(o.Side, o.From) is not { } to)
-                    continue;
-                var moved = (BuildingOpening)o.Duplicate();
-                moved.Side = to.Side;
-                moved.From = o.From + to.Shift;
-                openings.Add(moved);
-            }
-
-            undo.AddDoProperty(building, Building.PropertyName.Openings, openings);
-            undo.AddUndoProperty(building, Building.PropertyName.Openings, building.Openings);
-            var details = new Godot.Collections.Array<WallDetail>();
-            foreach (var d in building.Details.Where(d => d is not null))
-            {
-                if (sides(d.Side, d.Along) is not { } to)
-                    continue;
-                var moved = (WallDetail)d.Duplicate();
-                moved.Side = to.Side;
-                moved.Along = d.Along + to.Shift;
-                details.Add(moved);
-            }
-
-            undo.AddDoProperty(building, Building.PropertyName.Details, details);
-            undo.AddUndoProperty(building, Building.PropertyName.Details, building.Details);
-            SelectDetail(null);
-            var projections = new Godot.Collections.Array<BuildingProjection>();
-            foreach (var p in building.Projections.Where(p => p is not null))
-            {
-                if (sides(p.Side, p.From) is not { } to)
-                    continue;
-                var moved = (BuildingProjection)p.Duplicate();
-                moved.Side = to.Side;
-                moved.From = p.From + to.Shift;
-                projections.Add(moved);
-            }
-
-            undo.AddDoProperty(building, Building.PropertyName.Projections, projections);
-            undo.AddUndoProperty(building, Building.PropertyName.Projections, building.Projections);
-            SelectProjection(null);
+            Renumber(undo, building, sides);
             var roof = building.RoofSide >= 0 && sides(building.RoofSide, 0f) is { } r ? r.Side : -1;
             undo.AddDoProperty(building, Building.PropertyName.RoofSide, roof);
             undo.AddUndoProperty(building, Building.PropertyName.RoofSide, building.RoofSide);
@@ -689,6 +670,56 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
         }
 
         undo.CommitAction();
+    }
+
+    /// <summary>
+    /// What is on a building's walls (doors and windows, details, balconies) moved to the walls they are
+    /// on now, as part of a step to undo: from each one's wall number and how far along it, where it goes
+    /// (none: gone with its wall). Copies moved, the old ones kept as they were for undoing.
+    /// </summary>
+    public void Renumber(EditorUndoRedoManager undo, Building building, System.Func<int, float, (int Side, float Shift)?> sides)
+    {
+        var openings = new Godot.Collections.Array<BuildingOpening>();
+        foreach (var o in building.Openings.Where(o => o is not null))
+        {
+            if (sides(o.Side, o.From) is not { } to)
+                continue;
+            var moved = (BuildingOpening)o.Duplicate();
+            moved.Side = to.Side;
+            moved.From = o.From + to.Shift;
+            openings.Add(moved);
+        }
+
+        undo.AddDoProperty(building, Building.PropertyName.Openings, openings);
+        undo.AddUndoProperty(building, Building.PropertyName.Openings, building.Openings);
+        var details = new Godot.Collections.Array<WallDetail>();
+        foreach (var d in building.Details.Where(d => d is not null))
+        {
+            if (sides(d.Side, d.Along) is not { } to)
+                continue;
+            var moved = (WallDetail)d.Duplicate();
+            moved.Side = to.Side;
+            moved.Along = d.Along + to.Shift;
+            details.Add(moved);
+        }
+
+        undo.AddDoProperty(building, Building.PropertyName.Details, details);
+        undo.AddUndoProperty(building, Building.PropertyName.Details, building.Details);
+        SelectDetail(null);
+        var projections = new Godot.Collections.Array<BuildingProjection>();
+        foreach (var p in building.Projections.Where(p => p is not null))
+        {
+            if (sides(p.Side, p.From) is not { } to)
+                continue;
+            var moved = (BuildingProjection)p.Duplicate();
+            moved.Side = to.Side;
+            moved.From = p.From + to.Shift;
+            projections.Add(moved);
+        }
+
+        undo.AddDoProperty(building, Building.PropertyName.Projections, projections);
+        undo.AddUndoProperty(building, Building.PropertyName.Projections, building.Projections);
+        SelectProjection(null);
     }
 
     /// <summary>Where sides go with corner k taken away: the side starting at it goes (its doors and windows with it), those after it come down one.</summary>
@@ -708,6 +739,21 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
 
     /// <summary>A corner on the grid if Shift is held (the building's own: in its space, from its origin).</summary>
     public static Vector2 Snapped(Vector2 at, bool snap) => snap ? at.Snapped(new Vector2(GridStep, GridStep)) : at;
+
+    /// <summary>
+    /// Where a building's grid is laid from: its main outline's first corner (its origin is moved to
+    /// the middle once it is drawn, off the grid its corners were drawn on); its origin before it has one.
+    /// </summary>
+    public static Vector2 GridOrigin(Building building) => building.Outline.Length > 0 ? building.Outline[0] : Vector2.Zero;
+
+    /// <summary>On a building's grid (see <see cref="GridOrigin"/>) with Shift, as it is otherwise.</summary>
+    public static Vector2 Snapped(Building building, Vector2 at, bool snap)
+    {
+        if (!snap)
+            return at;
+        var origin = GridOrigin(building);
+        return (at - origin).Snapped(new Vector2(GridStep, GridStep)) + origin;
+    }
 
     /// <summary>The building being edited, if any.</summary>
     public Building? Edited => _building;

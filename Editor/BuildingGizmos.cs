@@ -124,9 +124,13 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
             AddHandles(gizmo, middles, GetMaterial("middles", gizmo), [.. Enumerable.Range(Middles, outline.Length)]);
         }
 
+        Parts(gizmo, building, own);
+
         if (UnpleasantBuildingsPlugin.Selected(building))
         {
-            Grid(gizmo, building, building.CutStorey >= 0 ? building.StoreyFloor(building.CutStorey) : floor);
+            // On the floor a part is being drawn on, while one is.
+            Grid(gizmo, building, _plugin is { DrawingPart: true } drawingPart ? building.StoreyFloor(drawingPart.PartFloor)
+                : building.CutStorey >= 0 ? building.StoreyFloor(building.CutStorey) : floor);
             // What the corner being drawn or dragged snapped to.
             if (_plugin is { Guides.Count: > 0 } plugin)
             {
@@ -336,9 +340,9 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
                 lines.AddRange([corners[k], corners[(k + 1) % 4]]);
         }
 
-        if (plugin.Ghost is { } ghost && ghost.Opening.Side < building.Outline.Length)
+        if (plugin.Ghost is { } ghost && ghost.Opening.Side < building.SideCount)
             Outline(ghost.Opening, ghost.Storey);
-        if (plugin.SelectedOpening is { } selected && selected.Side < building.Outline.Length)
+        if (plugin.SelectedOpening is { } selected && selected.Side < building.SideCount)
         {
             foreach (var (o, storey) in building.Placed().Where(p => p.Opening == selected))
                 Outline(o, storey);
@@ -604,9 +608,9 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
         if (_plugin is not { } plugin || !UnpleasantBuildingsPlugin.Selected(building) || building.Outline.Length < 3)
             return;
         var lines = new List<Vector3>();
-        if (plugin.ProjectionGhost is { } ghost && ghost.Projection.Side < building.Outline.Length)
+        if (plugin.ProjectionGhost is { } ghost && ghost.Projection.Side < building.SideCount)
             BoxLines(lines, UnpleasantBuildingsPlugin.SideSpace(building, ghost.Projection.Side), UnpleasantBuildingsPlugin.LedgeBox(building, ghost.Projection, ghost.Storey));
-        if (plugin.SelectedProjection is { } selected && selected.Side < building.Outline.Length)
+        if (plugin.SelectedProjection is { } selected && selected.Side < building.SideCount)
         {
             foreach (var (p, storey) in building.PlacedProjections().Where(x => x.Projection == selected))
                 BoxLines(lines, UnpleasantBuildingsPlugin.SideSpace(building, p.Side), UnpleasantBuildingsPlugin.LedgeBox(building, p, storey));
@@ -750,7 +754,7 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
         {
             if (building.WallAt(from, direction) is not { } hit)
                 return;
-            var storey = Mathf.Clamp(Mathf.FloorToInt((hit.V - _grip.Y - building.FloorHeight) / building.StoreyHeight), 0, building.Storeys - 1);
+            var storey = building.StoreyOn(hit.Side, hit.V - _grip.Y);
             d.Side = hit.Side;
             d.Storey = storey;
             d.Along = UnpleasantBuildingsPlugin.Step(hit.U - _grip.X * building.DetailAcross(d));
@@ -825,14 +829,17 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
     private void Grid(EditorNode3DGizmo gizmo, Building building, float height)
     {
         var step = UnpleasantBuildingsPlugin.GridStep;
-        var points = building.Outline.ToList();
+        // Over all its parts (and where a corner is being drawn), laid from its main outline's first
+        // corner, so its lines run through the corners drawn on it (see GridOrigin).
+        var points = building.AllParts().SelectMany(p => p.Outline).ToList();
         points.Add(Vector2.Zero);
-        if (_plugin is { Drawing: true, Next: { } next })
+        if (_plugin is { Next: { } next } && (_plugin.Drawing || _plugin.DrawingPart))
             points.Add(next);
-        var low = points.Aggregate((a, b) => a.Min(b)) - new Vector2(GridMargin, GridMargin);
-        var high = points.Aggregate((a, b) => a.Max(b)) + new Vector2(GridMargin, GridMargin);
-        low = (low / step).Floor() * step;
-        high = (high / step).Ceil() * step;
+        var origin = UnpleasantBuildingsPlugin.GridOrigin(building);
+        var low = points.Aggregate((a, b) => a.Min(b)) - new Vector2(GridMargin, GridMargin) - origin;
+        var high = points.Aggregate((a, b) => a.Max(b)) + new Vector2(GridMargin, GridMargin) - origin;
+        low = (low / step).Floor() * step + origin;
+        high = (high / step).Ceil() * step + origin;
         high = high.Min(low + new Vector2(GridMost * step, GridMost * step));
         var lines = new List<Vector3>();
         for (var x = low.X; x <= high.X + 0.001f; x += step)
@@ -844,6 +851,7 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
 
     public override string _GetHandleName(EditorNode3DGizmo gizmo, int handleId, bool secondary) => handleId switch
     {
+        >= PartHandleIds => PartHandle(handleId) is { Middle: true } m ? $"New corner of part {m.Part + 1}" : $"Part {PartHandle(handleId)!.Value.Part + 1}, corner {PartHandle(handleId)!.Value.Index + 1}",
         MoveHandle => "Move building",
         >= InnerHandleIds => new[] { "Opening", "Left side", "Right side", "Top" }[handleId - InnerHandleIds],
         >= StairHandleIds => new[] { "Stairs' foot", "Stairs' heading", "Stairs' width", "Stairs' width", "Stairs' length", "Stairs' turn" }[handleId - StairHandleIds],
@@ -857,6 +865,12 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
 
     public override Variant _GetHandleValue(EditorNode3DGizmo gizmo, int handleId, bool secondary)
     {
+        if (PartHandle(handleId) is { } partHandle)
+        {
+            var parts = ((Building)gizmo.GetNode3D()).Parts;
+            return partHandle.Part < parts.Count && parts[partHandle.Part] is { } wing ? wing.Outline : new Vector2[0];
+        }
+
         if (handleId == MoveHandle)
             return ((Building)gizmo.GetNode3D()).GlobalPosition;
 
@@ -894,6 +908,12 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
     public override void _SetHandle(EditorNode3DGizmo gizmo, int handleId, bool secondary, Camera3D camera, Vector2 point)
     {
         var building = (Building)gizmo.GetNode3D();
+        if (PartHandle(handleId) is { } partHandle)
+        {
+            DragPart(building, partHandle.Part, partHandle.Index, partHandle.Middle, camera, point);
+            return;
+        }
+
         if (handleId == MoveHandle)
         {
             DragBuilding(building, camera, point);
@@ -965,7 +985,7 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
         // Joined to the corners either side of it.
         var n = outline.Count;
         var at = _plugin?.Place(building, world, Input.IsKeyPressed(Key.Shift), [((index - 1 + n) % n, (index - 2 + n) % n), ((index + 1) % n, (index + 2) % n)], camera, point)
-            ?? UnpleasantBuildingsPlugin.Snapped(UnpleasantBuildingsPlugin.Flat(building.ToLocal(world)), Input.IsKeyPressed(Key.Shift));
+            ?? UnpleasantBuildingsPlugin.Snapped(building, UnpleasantBuildingsPlugin.Flat(building.ToLocal(world)), Input.IsKeyPressed(Key.Shift));
         outline[index] = at;
         building.Outline = [.. outline];
     }
@@ -973,6 +993,12 @@ public partial class BuildingGizmos : EditorNode3DGizmoPlugin
     public override void _CommitHandle(EditorNode3DGizmo gizmo, int handleId, bool secondary, Variant restore, bool cancel)
     {
         var building = (Building)gizmo.GetNode3D();
+        if (PartHandle(handleId) is { } partHandle)
+        {
+            CommitPart(building, partHandle.Part, partHandle.Middle, restore, cancel);
+            return;
+        }
+
         if (handleId == MoveHandle)
         {
             var now = building.GlobalPosition;

@@ -11,6 +11,9 @@ namespace UnpleasantMedia.UnpleasantBuildings;
 /// </summary>
 public readonly record struct Hole(int Side, float U0, float U1, float V0, float V1, BuildingOpening Opening);
 
+/// <summary>A stretch of a wall left out, another part of its building lying against it: t0 to t1 along its side (0 to 1), v0 to v1 up.</summary>
+public readonly record struct Covered(float T0, float T1, float V0, float V1);
+
 /// <summary>The materials of a building's doors and windows.</summary>
 public readonly record struct OpeningMaterials(Material? Frame, Material? Glass, Material? Door, Material? Backing);
 
@@ -245,7 +248,12 @@ public static partial class BuildingMesher
         /// upright strips between the places its top bends and its holes start and end, each strip
         /// built round the holes in it.
         /// </summary>
-        public void Holed(Vector2[] ring, float from, System.Func<Vector2, float> top, System.Func<Vector2, Vector2, List<float>> breaks, List<Hole> holes, bool inward = false)
+        /// <param name="covered">
+        /// Where a side's wall is left out (another part of the building lies against it there, so the
+        /// two are one shape): from t0 to t1 along the side (0 to 1), v0 to v1 up. None if not given.
+        /// </param>
+        public void Holed(Vector2[] ring, float from, System.Func<Vector2, float> top, System.Func<Vector2, Vector2, List<float>> breaks, List<Hole> holes, bool inward = false,
+            System.Func<Vector2, Vector2, List<Covered>>? covered = null)
         {
             var along = 0f;
             for (var i = 0; i < ring.Length; i++)
@@ -257,7 +265,10 @@ public static partial class BuildingMesher
                     continue;
                 var normal = inward ? -Out(a, b) : Out(a, b);
                 var mine = holes.Where(h => h.Side == i).ToList();
-                var ts = breaks(a, b).Concat(mine.SelectMany(h => new[] { h.U0 / length, h.U1 / length })).Where(t => t >= 0f && t <= 1f).Distinct().OrderBy(t => t).ToList();
+                var open = covered?.Invoke(a, b) ?? [];
+                var ts = breaks(a, b).Concat(mine.SelectMany(h => new[] { h.U0 / length, h.U1 / length }))
+                    .Concat(open.SelectMany(c => new[] { c.T0, c.T1 }))
+                    .Where(t => t >= 0f && t <= 1f).Distinct().OrderBy(t => t).ToList();
                 for (var k = 0; k + 1 < ts.Count; k++)
                 {
                     var (t0, t1) = (ts[k], ts[k + 1]);
@@ -268,7 +279,11 @@ public static partial class BuildingMesher
                     var (tp, tq) = (top(p), top(q));
                     var (up, uq) = (along + length * t0, along + length * t1);
                     var middle = (t0 + t1) / 2f * length;
-                    var cuts = mine.Where(h => h.U0 < middle && h.U1 > middle).OrderBy(h => h.V0).ToList();
+                    var tMiddle = (t0 + t1) / 2f;
+                    // Its holes and the stretches another part covers, alike: left open from bottom to top.
+                    var cuts = mine.Where(h => h.U0 < middle && h.U1 > middle).Select(h => (h.V0, h.V1))
+                        .Concat(open.Where(c => c.T0 < tMiddle && c.T1 > tMiddle).Select(c => (c.V0, c.V1)))
+                        .OrderBy(h => h.V0).ToList();
                     var at = from;
                     foreach (var h in cuts)
                     {

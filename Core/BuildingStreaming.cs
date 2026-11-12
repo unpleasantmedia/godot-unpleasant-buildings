@@ -60,7 +60,8 @@ public partial class Building
         if (_outline.Length == 0)
             return (GlobalPosition, 0f);
         var middle2 = _outline.Aggregate(Vector2.Zero, (s, c) => s + c) / _outline.Length;
-        var reach = _outline.Max(c => c.DistanceTo(middle2));
+        // Out to the furthest corner of any of its parts.
+        var reach = AllParts().SelectMany(p => p.Outline).Max(c => c.DistanceTo(middle2));
         return (ToGlobal(new Vector3(middle2.X, 0f, middle2.Y)), reach);
     }
 }

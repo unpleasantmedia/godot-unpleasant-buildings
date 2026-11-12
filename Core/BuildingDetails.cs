@@ -65,7 +65,8 @@ public partial class Building
     }
 
     /// <summary>Whether a detail is on a side and storey it has.</summary>
-    public bool Fits(WallDetail d) => d.Type?.Scene is not null && d.Side >= 0 && d.Side < _outline.Length && d.Storey < _storeys && _outline.Length >= 3 && Simple(_outline);
+    public bool Fits(WallDetail d) => d.Type?.Scene is not null && _outline.Length >= 3 && Simple(_outline)
+        && WallSide(d.Side) is { Outline.Length: >= 3 } w && d.Storey >= w.Floor && d.Storey < w.Top && Simple(w.Outline);
 
     /// <summary>A detail's scene as put in, if it is.</summary>
     public Node3D? DetailNode(WallDetail d) => _shown.TryGetValue(d, out var shown) ? shown.Node : null;
@@ -120,6 +121,7 @@ public partial class Building
                         body.ProcessMode = ProcessModeEnum.Disabled;
                 node.SetMeta(DetailMeta, true);
                 AddChild(node, false, InternalMode.Back);
+                OwnInternal(node);
                 shown = (node, d.Type.Scene!);
                 _shown[d] = shown;
             }

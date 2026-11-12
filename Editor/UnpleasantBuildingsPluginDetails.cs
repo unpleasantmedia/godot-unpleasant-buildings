@@ -63,6 +63,12 @@ public partial class UnpleasantBuildingsPlugin
         _detailSections = new VBoxContainer { SizeFlagsHorizontal = Control.SizeFlags.ExpandFill };
         scroll.AddChild(_detailSections);
         _detailDock.AddChild(scroll);
+        // In a dock of its own, added once and then opened and closed (added and taken away again on
+        // every selection, the editor laid out its docks anew each time, and closed its bottom panel).
+        _detailHolder = new EditorDock { Title = "Wall Details", DefaultSlot = EditorDock.DockSlot.RightBl, Transient = true, Global = false };
+        _detailHolder.AddChild(_detailDock);
+        AddDock(_detailHolder);
+        _detailHolder.Close();
         _detailButtons = new ButtonGroup { AllowUnpress = true };
 
         _detailPanel = new HBoxContainer { Visible = false };
@@ -94,8 +100,15 @@ public partial class UnpleasantBuildingsPlugin
     private void RemoveDetailTools()
     {
         ShowDetailDock(false);
-        _detailDock?.QueueFree();
+        if (_detailHolder is not null && IsInstanceValid(_detailHolder))
+        {
+            RemoveDock(_detailHolder);
+            _detailHolder.QueueFree();
+        }
     }
+
+    /// <summary>The dock the detail palette is in (see AddDetailTools).</summary>
+    private EditorDock? _detailHolder;
 
     /// <summary>The dock shown while a building is selected, and filled from its library.</summary>
     private void ShowDetailDock(bool show)
@@ -110,12 +123,12 @@ public partial class UnpleasantBuildingsPlugin
         _detailDockShown = show;
         if (show)
         {
-            AddControlToDock(DockSlot.RightBl, _detailDock);
+            _detailHolder?.MakeVisible();
             FillDetailDock();
         }
         else
         {
-            RemoveControlFromDocks(_detailDock);
+            _detailHolder?.Close();
             StopPlacingDetail();
         }
     }
@@ -341,7 +354,7 @@ public partial class UnpleasantBuildingsPlugin
         _detailUp.Editable = !locked;
         _detailCentreUp!.Disabled = locked;
         _detailStorey!.Value = d.Storey;
-        _detailStorey.MaxValue = Mathf.Max(0, _building.Storeys - 1);
+        _detailStorey.MaxValue = Mathf.Max(0, _building.AllStoreys - 1);
         _detailWidth!.Value = d.Width;
         _detailHeight!.Value = d.Height;
         // Details aren't sized here.
@@ -515,7 +528,7 @@ public partial class UnpleasantBuildingsPlugin
         var (from, direction) = LocalRay(building, camera, screen);
         if (building.WallAt(from, direction) is not { } hit)
             return null;
-        var storey = Mathf.Clamp(Mathf.FloorToInt((hit.V - building.FloorHeight) / building.StoreyHeight), 0, building.Storeys - 1);
+        var storey = building.StoreyOn(hit.Side, hit.V);
         var detail = new WallDetail { Type = type, Side = hit.Side, Storey = storey, Width = 1f, Height = building.StoreyHeight };
         // Its middle under the mouse (its origin may be anywhere in it: a drainpipe's is at its bottom).
         var middle = TypeSize(type).GetCenter();

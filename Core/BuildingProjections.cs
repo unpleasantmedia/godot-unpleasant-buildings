@@ -438,29 +438,38 @@ public partial class Building
         var placed = new List<(BuildingProjection, int)>();
         foreach (var p in _projections.Where(p => p is not null))
         {
-            if (p.Side < 0 || p.Side >= _outline.Length || p.From < -0.001f || p.From + p.Width > SideLength(p.Side) + 0.001f)
+            // On a wall of any of its parts, within that part's storeys (a porch, on the ground floor only).
+            if (WallSide(p.Side) is not { Outline.Length: >= 3 } w || p.From < -0.001f || p.From + p.Width > SideLength(p.Side) + 0.001f)
                 continue;
-            if (p.Kind == ProjectionKind.Porch && p.Storey != 0)
+            if (p.Kind == ProjectionKind.Porch && (p.Storey != 0 || w.Floor != 0))
                 continue;
-            var last = p.Kind == ProjectionKind.Balcony && p.AllStoreys ? _storeys - 1 : p.Storey;
-            for (var storey = p.Storey; storey <= last && storey < _storeys; storey++)
+            var last = p.Kind == ProjectionKind.Balcony && p.AllStoreys ? w.Top - 1 : p.Storey;
+            for (var storey = Mathf.Max(p.Storey, w.Floor); storey <= last && storey < w.Top; storey++)
                 placed.Add((p, storey));
         }
 
         return placed;
     }
 
-    private List<Ledge> Ledges()
+    /// <summary>Its main part's balconies, awnings and porches (see <see cref="PartLedges"/>).</summary>
+    private List<Ledge> Ledges() => PartLedges(-1);
+
+    /// <summary>A part's balconies, awnings and porches (its main one's: -1): by the side of its outline turned outward, along it.</summary>
+    private List<Ledge> PartLedges(int part)
     {
-        var reversed = BuildingMesher.SignedArea(_outline) < 0f;
         var ground = GroundRange().Low;
-        return PlacedProjections().Select(x =>
+        var ledges = new List<Ledge>();
+        foreach (var (p, storey) in PlacedProjections())
         {
-            var (p, storey) = x;
+            if (WallSide(p.Side) is not { } w || w.Part != part)
+                continue;
+            var reversed = BuildingMesher.SignedArea(w.Outline) < 0f;
             var length = SideLength(p.Side);
             var (u0, u1) = reversed ? (length - p.From - p.Width, length - p.From) : (p.From, p.From + p.Width);
-            return new Ledge(BuildingMesher.OutwardSide(_outline, p.Side), u0, u1, StoreyFloor(storey) + p.Up, p, ground, reversed, StepsGround(p, ground));
-        }).ToList();
+            ledges.Add(new Ledge(BuildingMesher.OutwardSide(w.Outline, w.Local), u0, u1, StoreyFloor(storey) + p.Up, p, ground, reversed, StepsGround(p, ground)));
+        }
+
+        return ledges;
     }
 
     /// <summary>For a porch with steps: the highest ground in front of its deck where they go (sampled out to 1.5 m); the lowest ground without.</summary>

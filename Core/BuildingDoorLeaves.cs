@@ -110,6 +110,7 @@ public partial class Building
             }
 
             AddChild(doorway, false, InternalMode.Back);
+            OwnInternal(doorway);
             _doorways.Add(doorway);
         }
     }
