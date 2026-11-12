@@ -132,9 +132,14 @@ public partial class BuildingGizmos
         undo.AddDoProperty(wing, BuildingWing.PropertyName.Outline, now);
         undo.AddUndoProperty(wing, BuildingWing.PropertyName.Outline, was);
         // A corner put in: what is on the walls after it numbered on one (see Building.WallSide), and
-        // what was on the side it split, past the new corner, onto the new side after it.
-        if (middle && added is { } k && k > 0 && k < now.Length)
-            _plugin?.Renumber(undo, building, UnpleasantBuildingsPlugin.Inserted(building.FirstSide(part) + k, now[k - 1].DistanceTo(now[k])));
+        // what was on the side it split, past the new corner, onto the new side after it. Either way,
+        // what the part now covers on the building's walls taken away (worked out with it moved).
+        var sides = middle && added is { } k && k > 0 && k < now.Length
+            ? UnpleasantBuildingsPlugin.Inserted(building.FirstSide(part) + k, now[k - 1].DistanceTo(now[k]))
+            : (side, _) => (side, 0f);
+        wing.Outline = now;
+        _plugin?.Renumber(undo, building, sides, dropCovered: true);
+        wing.Outline = was;
         undo.CommitAction();
     }
 }

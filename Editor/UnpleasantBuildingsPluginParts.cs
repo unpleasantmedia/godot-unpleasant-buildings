@@ -103,7 +103,22 @@ public partial class UnpleasantBuildingsPlugin
             : !building.Attached(part.Outline, part.Floor, index) ? $"on floor {part.Floor} it has to touch a part on that floor, or rest on one on the floor below"
             : null;
         if (why is null)
+        {
+            // What it covers on the building's walls taken away (a step of its own, if there is any).
+            bool Covered(int side, float from, float to, int storey, float v0, float v1, bool every) =>
+                !every && building.CoveredOver(side, from, to, building.StoreyFloor(storey) + v0, building.StoreyFloor(storey) + v1);
+            if (building.Openings.Any(o => o is not null && Covered(o.Side, o.From, o.From + o.Width, o.Storey, o.Bottom, o.Bottom + o.Height, o.AllStoreys))
+                || building.Details.Any(d => d is not null && Covered(d.Side, d.Along - d.Width / 2f, d.Along + d.Width / 2f, d.Storey, d.Up, d.Up, false))
+                || building.Projections.Any(p => p is not null && Covered(p.Side, p.From, p.From + p.Width, p.Storey, 0.1f, 0.1f, p.AllStoreys)))
+            {
+                var clear = GetUndoRedo();
+                clear.CreateAction("Remove covered openings and details", customContext: building);
+                Renumber(clear, building, (side, _) => (side, 0f), dropCovered: true);
+                clear.CommitAction();
+            }
+
             return;
+        }
         GD.PushWarning($"Draw Part: the part wasn't kept: {why}.");
         var parts = building.Parts.Duplicate();
         parts.RemoveAt(index);

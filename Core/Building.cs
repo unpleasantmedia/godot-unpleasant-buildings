@@ -327,7 +327,6 @@ public partial class Building : Node3D
     private List<Hole> PartHoles(int part)
     {
         var holes = new List<Hole>();
-        List<PartBlock>? blocks = null;
         foreach (var (o, storey) in Placed())
         {
             if (WallSide(o.Side) is not { } w || w.Part != part)
@@ -338,17 +337,9 @@ public partial class Building : Node3D
             var (u0, u1) = reversed ? (length - o.From - o.Width, length - o.From) : (o.From, o.From + o.Width);
             var v0 = StoreyFloor(storey) + o.Bottom;
             var hole = new Hole(BuildingMesher.OutwardSide(outline, w.Local), u0, u1, v0, v0 + o.Height, o);
-            if (_parts.Count > 0)
-            {
-                blocks ??= PartBlocks(float.PositiveInfinity);
-                var ring = BuildingMesher.Outward(outline);
-                var (a, b) = (ring[hole.Side], ring[(hole.Side + 1) % ring.Length]);
-                var t = (u0 + u1) / 2f / Mathf.Max(length, 1e-4f);
-                var v = (hole.V0 + hole.V1) / 2f;
-                // Every other part's block (its own told by its outline: the same array).
-                if (BuildingMesher.CoveredBy(a, b, blocks.Where(x => !ReferenceEquals(x.Outline, outline))).Any(c => c.T0 <= t && t <= c.T1 && c.V0 <= v && v <= c.V1))
-                    continue;
-            }
+            // Another part over any of it: left out on this storey.
+            if (_parts.Count > 0 && CoveredOver(o.Side, o.From, o.From + o.Width, hole.V0, hole.V1))
+                continue;
 
             holes.Add(hole);
         }

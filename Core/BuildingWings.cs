@@ -230,6 +230,51 @@ public partial class Building
         }
     }
 
+    /// <summary>
+    /// Whether a place on a wall (along it from its start, and up) has another part right outside it:
+    /// the two are one shape there, and whatever is on the wall at that place would be inside.
+    /// </summary>
+    public bool CoveredAt(int side, float along, float v)
+    {
+        if (WallSide(side) is not { } w)
+            return false;
+        var p = OnSide(side, along, v);
+        var o = SideOut(side).Normalized() * 0.05f;
+        var q = new Vector2(p.X + o.X, p.Z + o.Z);
+        foreach (var (index, outline, floor, top) in AllParts())
+        {
+            if (index == w.Part)
+                continue;
+            var (low, high) = index < 0 ? (FloorHeight, TopHeight) : (StoreyFloor(floor), StoreyFloor(top));
+            if (v > low && v < high && Geometry2D.IsPointInPolygon(q, outline))
+                return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Whether any of a stretch of wall (from one place along it to another, from one height to
+    /// another) has another part right outside it: looked at in steps across it, edges included.
+    /// </summary>
+    public bool CoveredOver(int side, float from, float to, float v0, float v1)
+    {
+        const float inset = 0.02f;
+        var (a, b) = (Mathf.Min(from, to) + inset, Mathf.Max(from, to) - inset);
+        var (c, d) = (Mathf.Min(v0, v1) + inset, Mathf.Max(v0, v1) - inset);
+        if (b < a)
+            (a, b) = ((from + to) / 2f, (from + to) / 2f);
+        if (d < c)
+            (c, d) = ((v0 + v1) / 2f, (v0 + v1) / 2f);
+        var across = Mathf.Max(1, Mathf.CeilToInt((b - a) / 0.1f));
+        var up = Mathf.Max(1, Mathf.CeilToInt((d - c) / 0.25f));
+        for (var i = 0; i <= across; i++)
+            for (var j = 0; j <= up; j++)
+                if (CoveredAt(side, Mathf.Lerp(a, b, (float)i / across), Mathf.Lerp(c, d, (float)j / up)))
+                    return true;
+        return false;
+    }
+
     /// <summary>Parts that are not attached to the rest (moved or changed since), by their number in <see cref="Parts"/>.</summary>
     public IEnumerable<int> LooseParts() =>
         Enumerable.Range(0, _parts.Count).Where(i => _parts[i] is { Outline.Length: >= 3 } p && !Attached(p.Outline, p.Floor, i));

@@ -466,6 +466,10 @@ public partial class Building
             var reversed = BuildingMesher.SignedArea(w.Outline) < 0f;
             var length = SideLength(p.Side);
             var (u0, u1) = reversed ? (length - p.From - p.Width, length - p.From) : (p.From, p.From + p.Width);
+            // Another part over any of it: left out on this storey.
+            var floor = StoreyFloor(storey) + p.Up;
+            if (_parts.Count > 0 && CoveredOver(p.Side, p.From, p.From + p.Width, floor + 0.1f, floor + 0.1f))
+                continue;
             ledges.Add(new Ledge(BuildingMesher.OutwardSide(w.Outline, w.Local), u0, u1, StoreyFloor(storey) + p.Up, p, ground, reversed, StepsGround(p, ground)));
         }
 

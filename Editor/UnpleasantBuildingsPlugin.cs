@@ -677,8 +677,15 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
     /// on now, as part of a step to undo: from each one's wall number and how far along it, where it goes
     /// (none: gone with its wall). Copies moved, the old ones kept as they were for undoing.
     /// </summary>
-    public void Renumber(EditorUndoRedoManager undo, Building building, System.Func<int, float, (int Side, float Shift)?> sides)
+    /// <param name="dropCovered">
+    /// Whether to take away what now lies where another part covers the wall (one storey's only:
+    /// those on every storey are left out of the mesh there, see Building.PartHoles). Worked out
+    /// on the building as it is now, so its new outlines must be in place while this is called.
+    /// </param>
+    public void Renumber(EditorUndoRedoManager undo, Building building, System.Func<int, float, (int Side, float Shift)?> sides, bool dropCovered = false)
     {
+        bool Covered(int side, float from, float to, int storey, float v0, float v1, bool every) =>
+            dropCovered && !every && building.CoveredOver(side, from, to, building.StoreyFloor(storey) + v0, building.StoreyFloor(storey) + v1);
         var openings = new Godot.Collections.Array<BuildingOpening>();
         foreach (var o in building.Openings.Where(o => o is not null))
         {
@@ -687,6 +694,8 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
             var moved = (BuildingOpening)o.Duplicate();
             moved.Side = to.Side;
             moved.From = o.From + to.Shift;
+            if (Covered(moved.Side, moved.From, moved.From + moved.Width, moved.Storey, moved.Bottom, moved.Bottom + moved.Height, moved.AllStoreys))
+                continue;
             openings.Add(moved);
         }
 
@@ -700,6 +709,8 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
             var moved = (WallDetail)d.Duplicate();
             moved.Side = to.Side;
             moved.Along = d.Along + to.Shift;
+            if (Covered(moved.Side, moved.Along - moved.Width / 2f, moved.Along + moved.Width / 2f, moved.Storey, moved.Up, moved.Up, false))
+                continue;
             details.Add(moved);
         }
 
@@ -714,6 +725,8 @@ public partial class UnpleasantBuildingsPlugin : EditorPlugin
             var moved = (BuildingProjection)p.Duplicate();
             moved.Side = to.Side;
             moved.From = p.From + to.Shift;
+            if (Covered(moved.Side, moved.From, moved.From + moved.Width, moved.Storey, 0.1f, 0.1f, moved.AllStoreys))
+                continue;
             projections.Add(moved);
         }
 
