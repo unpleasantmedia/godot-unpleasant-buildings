@@ -5,7 +5,8 @@ using Godot;
 namespace UnpleasantMedia.UnpleasantBuildings;
 
 /// <summary>One part of a building, for its mesh: its outline, and the heights it spans in the building's own space.</summary>
-public readonly record struct PartBlock(Vector2[] Outline, float Bottom, float Top);
+/// <param name="Flat">Whether its roof is flat.</param>
+public readonly record struct PartBlock(Vector2[] Outline, float Bottom, float Top, bool Flat = false);
 
 /// <summary>A part beside a building's main one, for its mesh (see <see cref="BuildingWing"/>).</summary>
 /// <param name="Index">Its place among all the building's blocks (the main one first), to leave itself out of what covers it.</param>
@@ -48,7 +49,7 @@ public static partial class BuildingMesher
                 if (t1 < t0)
                     (t0, t1) = (t1, t0);
                 if (t1 - t0 > 1e-4f)
-                    found.Add(new Covered(t0, t1, other.Bottom, other.Top));
+                    found.Add(new Covered(t0, t1, other.Bottom, other.Top, other.Flat));
             }
         }
 
@@ -92,22 +93,13 @@ public static partial class BuildingMesher
             {
                 // Flat: with its parapet, unless another part stands on it.
                 var parapet = over.Count > 0 ? 0f : Mathf.Max(0f, roof.Parapet);
-                wall.Holed(ring, block.Bottom, _ => block.Top + parapet, static (_, _) => [0f, 1f], wing.Holes, covered: covered);
                 if (parapet > 0.001f)
                 {
-                    var inner = RoofShape.Reached(ring, -ParapetThickness);
-                    wall.Band(inner, block.Top, block.Top + parapet, inward: true);
-                    for (var i = 0; i < ring.Length; i++)
-                    {
-                        var j = (i + 1) % ring.Length;
-                        Vector3 At(Vector2 p) => new(p.X, block.Top + parapet, p.Y);
-                        wall.Quad(At(ring[i]), At(ring[j]), At(inner[j]), At(inner[i]), Vector3.Up, ring[i], ring[j], inner[j], inner[i]);
-                    }
-
-                    roofing.Cap(inner, block.Top, up: true);
+                    Parapet(wall, roofing, ring, block.Bottom, block.Top, parapet, wing.Holes, covered, RoofRing(wing.Index, all));
                 }
                 else
                 {
+                    wall.Holed(ring, block.Bottom, _ => block.Top, static (_, _) => [0f, 1f], wing.Holes, covered: covered);
                     foreach (var open in Without(block.Outline, over))
                         roofing.Cap(open, block.Top, up: true);
                 }
@@ -151,6 +143,93 @@ public static partial class BuildingMesher
             faces.AddTo(mesh, material);
         foreach (var (material, faces) in roofs)
             faces.AddTo(mesh, material ?? walls);
+    }
+
+    /// <summary>
+    /// A covered stretch raised to the top of a parapet where what covers it has a flat roof at the
+    /// same height (the two roofs one, no parapet between them).
+    /// </summary>
+    public static System.Func<Vector2, Vector2, List<Covered>>? Raised(System.Func<Vector2, Vector2, List<Covered>>? covered, float top, float parapet) =>
+        covered is null ? null : (a, b) => covered(a, b).Select(c => c.Flat && Mathf.Abs(c.V1 - top) < 0.01f ? c with { V1 = top + parapet } : c).ToList();
+
+    /// <summary>
+    /// The outline its flat roof's parapet goes round, turned outward: its own, joined with every
+    /// part's whose flat roof is at the same height and lies against it (and theirs, in turn), so
+    /// their parapets run round them as one.
+    /// </summary>
+    public static Vector2[] RoofRing(int index, IReadOnlyList<PartBlock> all)
+    {
+        var own = all[index];
+        var group = new List<int> { index };
+        for (var k = 0; k < group.Count; k++)
+        {
+            var at = all[group[k]];
+            for (var i = 0; i < all.Count; i++)
+            {
+                var o = all[i];
+                if (!group.Contains(i) && o.Flat && o.Outline.Length >= 3 && Mathf.Abs(o.Top - own.Top) < 0.01f && Building.Touches(at.Outline, o.Outline))
+                    group.Add(i);
+            }
+        }
+
+        var union = Outward(own.Outline);
+        foreach (var i in group.Skip(1))
+        {
+            var merged = Geometry2D.MergePolygons(union, Outward(all[i].Outline)).ToList();
+            // Its outer one (holes run clockwise); apart (only near, not on, each other): left as it was.
+            var outer = merged.Where(m => m.Length >= 3 && !Geometry2D.IsPolygonClockwise(m)).ToList();
+            if (outer.Count == 1)
+                union = Outward(outer[0]);
+        }
+
+        return union;
+    }
+
+    /// <summary>
+    /// A flat roof with a parapet round it: walls from a height up to its top, and its share of the
+    /// parapet's inner face and cap and of the roof inside it. The parapet goes round the roof's
+    /// outline (see <see cref="RoofRing"/>): where another flat roof at its height lies against it,
+    /// the two are one roof, their parapet round both.
+    /// </summary>
+    private static void Parapet(Faces wall, Faces roofing, Vector2[] ring, float from, float top, float parapet, List<Hole> holes, System.Func<Vector2, Vector2, List<Covered>>? covered, Vector2[]? roofRing)
+    {
+        var high = top + parapet;
+        wall.Holed(ring, from, _ => high, static (_, _) => [0f, 1f], holes, covered: Raised(covered, top, parapet));
+        var round = roofRing ?? ring;
+        var inner = RoofShape.Reached(round, -ParapetThickness);
+        Vector3 At(Vector2 p, float h) => new(p.X, h, p.Y);
+        // The roof inside the parapet: its share.
+        foreach (var piece in Geometry2D.IntersectPolygons(ring, inner))
+        {
+            if (piece.Length >= 3 && !Geometry2D.IsPolygonClockwise(piece))
+                roofing.Cap(piece, top, up: true);
+        }
+
+        var along = 0f;
+        for (var i = 0; i < round.Length; i++)
+        {
+            var j = (i + 1) % round.Length;
+            var length = round[i].DistanceTo(round[j]);
+            var inward = -Out(round[i], round[j]);
+            // Its inner face: the stretches of it over this part.
+            foreach (var piece in Geometry2D.IntersectPolylineWithPolygon(new[] { inner[i], inner[j] }, ring))
+            {
+                if (piece.Length < 2)
+                    continue;
+                var (n0, n1) = (piece[0], piece[^1]);
+                var (u0, u1) = (along + n0.DistanceTo(inner[i]), along + n1.DistanceTo(inner[i]));
+                wall.Quad(At(n0, top), At(n1, top), At(n1, high), At(n0, high), inward, new(u0, -top), new(u1, -top), new(u1, -high), new(u0, -high));
+            }
+
+            // Its cap: the stretch between the outline and its inner face, over this part.
+            foreach (var piece in Geometry2D.IntersectPolygons(new[] { round[i], round[j], inner[j], inner[i] }, ring))
+            {
+                if (piece.Length >= 3 && !Geometry2D.IsPolygonClockwise(piece))
+                    wall.Cap(piece, high, up: true);
+            }
+
+            along += length;
+        }
     }
 
     /// <summary>

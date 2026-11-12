@@ -28,7 +28,7 @@ public static partial class BuildingMesher
     /// <param name="enterable">With an inside (inner walls, a floor and a ceiling); without, each door and window is closed off at the back of its wall.</param>
     /// <param name="innerFaces">What the walls' inner faces are made of, when enterable.</param>
     /// <param name="open">Cut open at the top (in the editor, to see in): no roof, the walls level.</param>
-    public static ArrayMesh Shell(Vector2[] outline, float bottom, float floor, float top, Material? walls, Material? plinth, RoofSettings roof, List<Hole> holes, OpeningMaterials openings, bool enterable, Material? innerFaces = null, bool open = false, RoomSet? rooms = null, List<DoorLeaf>? hung = null, System.Func<Vector2, Vector2, List<Covered>>? covered = null)
+    public static ArrayMesh Shell(Vector2[] outline, float bottom, float floor, float top, Material? walls, Material? plinth, RoofSettings roof, List<Hole> holes, OpeningMaterials openings, bool enterable, Material? innerFaces = null, bool open = false, RoomSet? rooms = null, List<DoorLeaf>? hung = null, System.Func<Vector2, Vector2, List<Covered>>? covered = null, Vector2[]? roofRing = null)
     {
         var mesh = new ArrayMesh();
         var ring = Outward(outline);
@@ -51,23 +51,14 @@ public static partial class BuildingMesher
         else if (roof.Type == RoofType.Flat)
         {
             var parapet = Mathf.Max(0f, roof.Parapet);
-            wall.Holed(ring, floor, _ => top + parapet, static (_, _) => [0f, 1f], holes, covered: covered);
             if (parapet > 0.001f)
             {
-                // The parapet: in from the walls, its inner face, and a cap on it.
-                var inner = RoofShape.Reached(ring, -ParapetThickness);
-                wall.Band(inner, top, top + parapet, inward: true);
-                for (var i = 0; i < ring.Length; i++)
-                {
-                    var j = (i + 1) % ring.Length;
-                    Vector3 At(Vector2 p) => new(p.X, top + parapet, p.Y);
-                    wall.Quad(At(ring[i]), At(ring[j]), At(inner[j]), At(inner[i]), Vector3.Up, ring[i], ring[j], inner[j], inner[i]);
-                }
-
-                roofing.Cap(inner, top, up: true);
+                // The parapet: in from the walls, its inner face, and a cap on it (none against a flat roof at its height).
+                Parapet(wall, roofing, ring, floor, top, parapet, holes, covered, roofRing);
             }
             else
             {
+                wall.Holed(ring, floor, _ => top, static (_, _) => [0f, 1f], holes, covered: covered);
                 roofing.Cap(ring, top, up: true);
             }
         }

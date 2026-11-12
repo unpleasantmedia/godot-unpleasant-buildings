@@ -12,7 +12,8 @@ namespace UnpleasantMedia.UnpleasantBuildings;
 public readonly record struct Hole(int Side, float U0, float U1, float V0, float V1, BuildingOpening Opening);
 
 /// <summary>A stretch of a wall left out, another part of its building lying against it: t0 to t1 along its side (0 to 1), v0 to v1 up.</summary>
-public readonly record struct Covered(float T0, float T1, float V0, float V1);
+/// <param name="Flat">Whether what covers it has a flat roof (its top): two flat roofs at one height meet with no parapet between.</param>
+public readonly record struct Covered(float T0, float T1, float V0, float V1, bool Flat = false);
 
 /// <summary>The materials of a building's doors and windows.</summary>
 public readonly record struct OpeningMaterials(Material? Frame, Material? Glass, Material? Door, Material? Backing);

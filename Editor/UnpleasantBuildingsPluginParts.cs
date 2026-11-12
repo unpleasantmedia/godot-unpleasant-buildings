@@ -34,6 +34,8 @@ public partial class UnpleasantBuildingsPlugin
         _partFloor = new SpinBox
         {
             MinValue = 0, MaxValue = 40, Step = 1, Value = 0,
+            // Taken as typed: without, a number typed in only counted once Enter was pressed.
+            UpdateOnTextChanged = true,
             TooltipText = "The floor new parts are drawn on, from 0 (the ground floor). Above it, a part has to touch a part on its floor, or rest on one on the floor below.",
         };
         _partFloor.Connect(Godot.Range.SignalName.ValueChanged, new Callable(this, MethodName.PartFloorChanged));

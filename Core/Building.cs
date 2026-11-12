@@ -764,9 +764,9 @@ public partial class Building : Node3D
         // Its number, for its windows' glass (see WindowSeed): from where it stands, so the same baked or not.
         var at = GlobalPosition;
         BuildingMesher.WindowSeed = (int)(BuildingMesher.StableHash(Mathf.RoundToInt(at.X), Mathf.RoundToInt(at.Z)) % 254u) + 1;
-        // Flat where another part stands on it (no parapet then: that part's walls rise from its edge).
+        // Flat where another part stands on it: a flat roof as any other (its parapet and material).
         var carried = MainCarried();
-        var roof = new RoofSettings(carried ? RoofType.Flat : _roof, BuildingMesher.OutwardSide(_outline, UsedRoofSide), _roofPitch, _roofOverhang, carried ? 0f : _parapetHeight, _roofMaterial);
+        var roof = new RoofSettings(carried ? RoofType.Flat : _roof, BuildingMesher.OutwardSide(_outline, UsedRoofSide), _roofPitch, _roofOverhang, _parapetHeight, _roofMaterial);
         var openings = new OpeningMaterials(
             _frameMaterial ?? GD.Load<Material>($"{Materials}/Frame.tres"),
             _glassMaterial ?? GD.Load<Material>($"{Materials}/Glass.tres"),
@@ -780,7 +780,7 @@ public partial class Building : Node3D
         // left out where one lies against it, and theirs where another does (see BuildingMesher.Wings).
         var blocks = PartBlocks(open ? top : float.PositiveInfinity);
         System.Func<Vector2, Vector2, List<Covered>>? covered = blocks.Count > 1 ? (a, b) => BuildingMesher.CoveredBy(a, b, blocks.Skip(1)) : null;
-        var mesh = BuildingMesher.Shell(_outline, low - Buried, FloorHeight, top, _wallMaterial, _foundationMaterial ?? _wallMaterial, roof, holes, openings, _enterable, _interiorWallMaterial ?? _wallMaterial, open, rooms, hung, covered);
+        var mesh = BuildingMesher.Shell(_outline, low - Buried, FloorHeight, top, _wallMaterial, _foundationMaterial ?? _wallMaterial, roof, holes, openings, _enterable, _interiorWallMaterial ?? _wallMaterial, open, rooms, hung, covered, blocks.Count > 1 ? BuildingMesher.RoofRing(0, blocks) : null);
         BuildingMesher.Ledges(mesh, BuildingMesher.Outward(_outline), open ? Ledges().Where(l => l.V < top).ToList() : Ledges(), UsedProjectionMaterials());
         BuildInterior(mesh, rooms, hung, open);
         if (blocks.Count > 1)

@@ -111,11 +111,11 @@ public partial class Building
     /// </summary>
     private List<PartBlock> PartBlocks(float cut)
     {
-        var blocks = new List<PartBlock> { new(_outline, FloorHeight, Mathf.Min(TopHeight, cut)) };
+        var blocks = new List<PartBlock> { new(_outline, FloorHeight, Mathf.Min(TopHeight, cut), _roof == RoofType.Flat || MainCarried()) };
         foreach (var part in _parts)
         {
             if (part is { Outline.Length: >= 3 } && Simple(part.Outline))
-                blocks.Add(new PartBlock(part.Outline, StoreyFloor(part.Floor), Mathf.Min(StoreyFloor(part.Top), cut)));
+                blocks.Add(new PartBlock(part.Outline, StoreyFloor(part.Floor), Mathf.Min(StoreyFloor(part.Top), cut), PartRoof(part).Type == RoofType.Flat));
         }
 
         return blocks;
